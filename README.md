@@ -1,10 +1,51 @@
+# Google Photo to Immich sync
+
+## Description
+
+This tool is not for importing entire Google Photos takeout to immich (for that you can use [immich-go](https://github.com/simulot/immich-go)).
+This tool is to sync albums from Google Photos to existing Immich library.
+
+It also written in Go, just for fun.
+
+### Use case
+Let's say you have your photos backup configured to both Immich and Google Photos; or you just imported your old (i.e. Nextcloud) library to Immich, but you created albums only in Google Photos.
+
+In both places you have similar set of assets, and want to organize your hi-rez originals the same way as your (most likely compressed) library in Google Photos.
+
+You don't want to re-import the whole library every time you download Google Takeout, you just want to sync your albums every now and then.
+
+## How to use
+
+### Prerequisites
+
+- First, you need to setup Go: https://go.dev/doc/install
+- Then, clone this repo and go into the root folder with `main.go`
+- In the project root, create `config.json` with the following content:
+```json
+{
+    "apiKey": "YourImmichApiKey",
+    "apiURL": "http://your_immich_host:port/api/",
+    "takeoutPath": "../Takeout/Google Photos"
+}
+```
+### Usage
+Finally, run:
+```shell
+go run main.go
+```
+First, script will call your Immich instance API and verify the name of the API key owner.
+
+After that, it will scan your Google Photo takeout folder and find albums with photos eligible to synchronization.
+
+Then, it will go over all albums asking if you want to sync photos to existing Immich album if it finds one, or create a new one. Every album synchonization require confirmation in command prompt. You can skip album confirmations by running the app with the ` -y` argument.
+Albums synchromization will not remove existing photos from Immich albums - it will just append missing ones.
 
 ### Minimal space usage option
 
-You can minimize use of your disk space by extracting only `.json` files required for synchronization.
+Because pp relies only on `.json` files from Google Photos takeout, you can minimize use of your disk space by extracting only files required for synchronization.
 You'll need `7zip` installed for that. After ensuring it's in your system PATH, just execute this command inside your download folder, replacing `takeout-XXXX-XX-XXT000000Z` with your archive file pattern:
-
 
 ```shell
 7z x takeout-XXXX-XX-XXT000000Z-*.zip -o"out" *.json -r
 ```
+This will extract Google Takeout archive including only `.json` files.

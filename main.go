@@ -54,10 +54,11 @@ type Takeout struct {
 
 var takeout map[string][]string
 
-var apiURL string = "http://192.168.1.115:30041/api/"
-
+var apiURL string = ""
 var apiKey string = ""
 var takeoutPath string = ""
+
+var supressConfirmation = false
 
 func getData(path string, method string, payload string) (body []byte, err error) {
 	url := apiURL + path
@@ -89,7 +90,10 @@ func getData(path string, method string, payload string) (body []byte, err error
 	return body, nil
 }
 
-func YesNoPrompt(label string, def bool) bool {
+func YesNoPrompt(label string, def bool, required ...bool) bool {
+	if !required[0] && supressConfirmation {
+		return true
+	}
 	choices := "Y/n"
 	if !def {
 		choices = "y/N"
@@ -279,10 +283,12 @@ func readConfig() {
 		defer file.Close()
 		var config struct {
 			ApiKey      string `json:"apiKey"`
+			ApiURL      string `json:"apiURL"`
 			TakeoutPath string `json:"takeoutPath"`
 		}
 		json.Unmarshal(bytefile, &config)
 		apiKey = config.ApiKey
+		apiURL = config.ApiURL
 		takeoutPath = config.TakeoutPath
 	} else {
 		fmt.Println("No config file found")
@@ -292,6 +298,10 @@ func readConfig() {
 
 func main() {
 	readConfig()
+
+	if len(os.Args) > 1 && os.Args[1] == "-y" {
+		supressConfirmation = true
+	}
 
 	body, err := getData("users/me", "GET", "")
 	if err != nil {
@@ -303,7 +313,7 @@ func main() {
 	}
 	json.Unmarshal(body, &response)
 
-	ok := YesNoPrompt("Are you "+response.Name+"?", false)
+	ok := YesNoPrompt("Are you "+response.Name+"?", false, true)
 	if !ok {
 		fmt.Println("Bye-bye...")
 		return
