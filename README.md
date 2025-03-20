@@ -14,9 +14,17 @@ In both places you have similar set of assets, and want to organize your hi-rez 
 
 You don't want to re-import the whole library every time you download Google Takeout, you just want to sync your albums every now and then.
 
+### Support Immich sync
+
+Become [GitHub Sponsor](https://github.com/sponsors/web-gears)
+
+Support with [PayPal](https://www.paypal.com/donate/?business=8879BAAHSFANQ&no_recurring=0&currency_code=USD)
+
 ## How to use
 
 ### Prerequisites
+
+Currently, script runs from the project's root and doesn't support installation.
 
 - First, you need to setup Go: https://go.dev/doc/install
 - Then, clone this repo and go into the root folder with `main.go`
@@ -49,3 +57,6 @@ You'll need `7zip` installed for that. After ensuring it's in your system PATH, 
 7z x takeout-XXXX-XX-XXT000000Z-*.zip -o"out" *.json -r
 ```
 This will extract Google Takeout archive including only `.json` files.
+
+## To Do
+- Add environment variables and CLI arguments support for configuration parameters
