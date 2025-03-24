@@ -43,7 +43,7 @@ go run main.go
 ```
 First, script will call your Immich instance API and verify the name of the API key owner.
 
-After that, it will scan your Google Photo takeout folder and find albums with photos eligible to synchronization.
+After that, it will scan your Google Photo takeout folder and find json files for albums with photos eligible to synchronization.
 
 Then, it will go over all albums asking if you want to sync photos to existing Immich album if it finds one, or create a new one. Every album synchonization require confirmation in command prompt. You can skip album confirmations by running the app with the ` -y` argument.
 Albums synchromization will not remove existing photos from Immich albums - it will just append missing ones.

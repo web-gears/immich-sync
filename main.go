@@ -90,8 +90,8 @@ func getData(path string, method string, payload string) (body []byte, err error
 	return body, nil
 }
 
-func YesNoPrompt(label string, def bool, required ...bool) bool {
-	if !required[0] && supressConfirmation {
+func YesNoPrompt(label string, def bool, required bool) bool {
+	if !required && supressConfirmation {
 		return true
 	}
 	choices := "Y/n"
@@ -168,7 +168,7 @@ func readAlbum(albumPath string, albumTitle string) {
 		takeout[albumTitle] = []string{}
 	}
 	for _, entry := range entries {
-		if entry.Name() == "metadata.json" {
+		if entry.Name() == "metadata.json" || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
 		file, err := os.Open(albumPath + "/" + entry.Name())
@@ -202,7 +202,7 @@ func findAssetByFilename(filename string) (asset []ImmichAsset) {
 func syncAlbum(album Album, files []string, override bool) {
 	fmt.Println("Syncing album: " + album.AlbumName)
 	if !override {
-		ok := YesNoPrompt("Are you sure you want to sync this album?", true)
+		ok := YesNoPrompt("Are you sure you want to sync this album?", true, false)
 		if !ok {
 			return
 		}
@@ -260,7 +260,7 @@ func syncAlbum(album Album, files []string, override bool) {
 
 func createAlbum(albumName string, files []string) {
 	fmt.Println("Creating album: " + albumName)
-	ok := YesNoPrompt("Are you sure you want to create this album?", true)
+	ok := YesNoPrompt("Are you sure you want to create this album?", true, false)
 	if !ok {
 		return
 	}
