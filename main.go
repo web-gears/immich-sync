@@ -8,11 +8,19 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 )
 
 type Asset struct {
-	Title *string `json:"title"`
+	Title        *string `json:"title"`
+	CreationTime struct {
+		Timestamp string `json:"timestamp"`
+	} `json:"creationTime"`
+	PhotoTakenTime struct {
+		Timestamp string `json:"timestamp"`
+	} `json:"photoTakenTime"`
 }
 
 type ImmichAlbumAsset struct {
@@ -52,7 +60,13 @@ type Takeout struct {
 	} `json:"albums"`
 }
 
-var takeout map[string][]string
+type TakeoutFile struct {
+	Filename       string
+	CreationTime   string
+	PhotoTakenTime string
+}
+
+var takeout map[string][]TakeoutFile
 
 var apiURL string = ""
 var apiKey string = ""
@@ -120,7 +134,7 @@ func YesNoPrompt(label string, def bool, required bool) bool {
 }
 
 func getAlbums() (albums []Album, err error) {
-	fmt.Println("Getting albums...")
+	fmt.Println("Getting Immich albums...")
 	body, err := getData("albums", "GET", "")
 	if err != nil {
 		fmt.Println(err)
@@ -138,8 +152,10 @@ func readFiles() {
 		log.Fatal(err)
 	}
 	if takeout == nil {
-		takeout = make(map[string][]string)
+		takeout = make(map[string][]TakeoutFile)
 	}
+	fmt.Println("Reading takeout albums...")
+	albumsTotal := 0
 	for _, entry := range entries {
 		entryPath := basePath + "/" + entry.Name()
 		metadata, err := os.Open(entryPath + "/metadata.json")
@@ -149,10 +165,16 @@ func readFiles() {
 			var asset Asset
 			json.Unmarshal(bytefile, &asset)
 			if asset.Title != nil && *asset.Title != "" {
+				albumsTotal++
 				readAlbum(entryPath, *asset.Title)
 			}
 
 		}
+	}
+	if albumsTotal == 0 {
+		fmt.Println("No albums found")
+	} else {
+		fmt.Printf("Found %d albums\n", albumsTotal)
 	}
 
 }
@@ -165,7 +187,7 @@ func readAlbum(albumPath string, albumTitle string) {
 		log.Fatal(err)
 	}
 	if _, ok := takeout[albumTitle]; !ok {
-		takeout[albumTitle] = []string{}
+		takeout[albumTitle] = []TakeoutFile{}
 	}
 	for _, entry := range entries {
 		if entry.Name() == "metadata.json" || !strings.HasSuffix(entry.Name(), ".json") {
@@ -178,28 +200,28 @@ func readAlbum(albumPath string, albumTitle string) {
 			var asset Asset
 			json.Unmarshal(bytefile, &asset)
 			if asset.Title != nil {
-				takeout[albumTitle] = append(takeout[albumTitle], *asset.Title)
+				takeout[albumTitle] = append(takeout[albumTitle], TakeoutFile{Filename: *asset.Title, CreationTime: asset.CreationTime.Timestamp, PhotoTakenTime: asset.PhotoTakenTime.Timestamp})
 			}
 
 		}
 	}
 }
 
-func findAssetByFilename(filename string) (asset []ImmichAsset) {
-	body, err := getData("search/metadata", "POST", "{\"originalFileName\": \""+filename+"\"}")
+func findAssetByFilename(filename string, createdAfter string, createdBefore string) (asset []ImmichAsset) {
+	body, err := getData("search/metadata", "POST", "{\"originalFileName\": \""+filename+"\", \"takenAfter\": \""+createdAfter+"\", \"takenBefore\": \""+createdBefore+"\"}")
 	if err != nil {
 		fmt.Println(err)
 	}
 	var response ImmichAlbumAsset
 	json.Unmarshal(body, &response)
 	if response.Assets.Total == 0 {
-		fmt.Println("Asset not found: " + filename)
+		// fmt.Println("Asset not found: " + filename)
 		return
 	}
 	return response.Assets.Items
 }
 
-func syncAlbum(album Album, files []string, override bool) {
+func syncAlbum(album Album, files []TakeoutFile, override bool) {
 	fmt.Println("Syncing album: " + album.AlbumName)
 	if !override {
 		ok := YesNoPrompt("Are you sure you want to sync this album?", true, false)
@@ -215,17 +237,33 @@ func syncAlbum(album Album, files []string, override bool) {
 	newAssets := []string{}
 	var immichAlbum Album
 	json.Unmarshal(body, &immichAlbum)
+	notFound := 0
+	fmt.Print("Searching files ")
 	for _, file := range files {
 		found := false
 		for _, asset := range immichAlbum.Assets {
-			if asset.OriginalFileName == file {
+			if asset.OriginalFileName == file.Filename {
 				found = true
 				break
 			}
 		}
 		if !found {
-			fmt.Println("Adding file: " + file)
-			assets := findAssetByFilename(file)
+			fmt.Print(".")
+			createdAfterTimestamp, err1 := strconv.ParseInt(file.PhotoTakenTime, 10, 64)
+			createdBeforeTimestamp, err2 := strconv.ParseInt(file.CreationTime, 10, 64)
+			if err1 != nil || err2 != nil {
+				fmt.Println("Error parsing timestamp:", err)
+				return
+			}
+			tm1 := time.Unix(createdAfterTimestamp, 0)
+			tm2 := time.Unix(createdBeforeTimestamp, 0)
+			createdAfter := tm1.Add(time.Hour * 24 * -1).Format("2006-01-02")
+			createdBefore := tm2.Add(time.Hour * 24 * 1).Format("2006-01-02")
+
+			assets := findAssetByFilename(file.Filename, createdAfter, createdBefore)
+			if len(assets) == 0 {
+				notFound++
+			}
 			var ids []string
 			for _, asset := range assets {
 				ids = append(ids, asset.Id)
@@ -236,6 +274,7 @@ func syncAlbum(album Album, files []string, override bool) {
 			continue
 		}
 	}
+	fmt.Println(" Done")
 	if len(newAssets) > 0 {
 		ids, _ := json.Marshal(newAssets)
 		body, err := getData("albums/"+album.Id+"/assets", "PUT", "{\"ids\": "+string(ids)+"}")
@@ -249,16 +288,24 @@ func syncAlbum(album Album, files []string, override bool) {
 			Success bool   `json:"success"`
 		}
 		json.Unmarshal(body, &response)
+		i := 0
 		for _, r := range response {
 			if !r.Success {
 				fmt.Println("Error syncing asset: " + r.Id)
+			} else {
+				i++
 			}
-
 		}
+		fmt.Println("Synced " + strconv.Itoa(i) + " assets to " + album.AlbumName)
+	} else {
+		fmt.Println("No new assets added to " + album.AlbumName)
+	}
+	if notFound > 0 {
+		fmt.Println("Warning: " + strconv.Itoa(notFound) + " assets not found")
 	}
 }
 
-func createAlbum(albumName string, files []string) {
+func createAlbum(albumName string, files []TakeoutFile) {
 	fmt.Println("Creating album: " + albumName)
 	ok := YesNoPrompt("Are you sure you want to create this album?", true, false)
 	if !ok {
@@ -291,8 +338,23 @@ func readConfig() {
 		apiURL = config.ApiURL
 		takeoutPath = config.TakeoutPath
 	} else {
-		fmt.Println("No config file found")
-		os.Exit(1)
+		fmt.Println("No config file found, trying ENV vars...")
+		apiKey = os.Getenv("IMMICH_API_KEY")
+		apiURL = os.Getenv("IMMICH_API_URL")
+		takeoutPath = os.Getenv("IMMICH_TAKEOUT_PATH")
+		if apiKey == "" {
+			fmt.Println("No IMMICH_API_KEY set")
+			os.Exit(1)
+		}
+		if apiURL == "" {
+			fmt.Println("No IMMICH_API_URL set")
+			os.Exit(1)
+		}
+		if takeoutPath == "" {
+			fmt.Println("No IMMICH_TAKEOUT_PATH set, using current directory")
+			takeoutPath = "."
+		}
+
 	}
 }
 
@@ -320,6 +382,10 @@ func main() {
 	}
 
 	readFiles()
+	if len(takeout) == 0 {
+		fmt.Println("No files found")
+		return
+	}
 	albums, err := getAlbums()
 	for albumName, files := range takeout {
 		foundAlbum := false

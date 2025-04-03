@@ -28,7 +28,12 @@ Currently, script runs from the project's root and doesn't support installation.
 
 - First, you need to setup Go: https://go.dev/doc/install
 - Then, clone this repo and go into the root folder with `main.go`
-- In the project root, create `config.json` with the following content:
+- Run `go install` from the project root and add `IMMICH_API_KEY` and `IMMICH_API_URL` environment variables.
+- Add `IMMICH_TAKEOUT_PATH` with full path to your Google Photos takeout folder
+or go to that folder to run `immich-sync`.
+
+#### Without installation
+- If you don't want to install and add environment variables, then create `config.json` in the project root with the following content:
 ```json
 {
     "apiKey": "YourImmichApiKey",
@@ -36,8 +41,13 @@ Currently, script runs from the project's root and doesn't support installation.
     "takeoutPath": "../Takeout/Google Photos"
 }
 ```
+
 ### Usage
 Finally, run:
+```shell
+immich-sync
+```
+or (if you want to run it without installation)
 ```shell
 go run main.go
 ```
@@ -46,7 +56,11 @@ First, script will call your Immich instance API and verify the name of the API 
 After that, it will scan your Google Photo takeout folder and find json files for albums with photos eligible to synchronization.
 
 Then, it will go over all albums asking if you want to sync photos to existing Immich album if it finds one, or create a new one. Every album synchonization require confirmation in command prompt. You can skip album confirmations by running the app with the ` -y` argument.
-Albums synchromization will not remove existing photos from Immich albums - it will just append missing ones.
+Albums synchromization will not remove existing photos from Immich albums - it will just append missing ones. 
+
+### Limitations
+
+Assets for synchronization searched by filename and creation time (+/- one day). That means that if you have different assets with identical filenames taken at the same day - this method could produce false positive search and potentially add extra or wrong assets to the albums.
 
 ### Minimal space usage option
 
@@ -59,4 +73,4 @@ You'll need `7zip` installed for that. After ensuring it's in your system PATH, 
 This will extract Google Takeout archive including only `.json` files.
 
 ## To Do
-- Add environment variables and CLI arguments support for configuration parameters
+- Add CLI arguments support for configuration parameters
