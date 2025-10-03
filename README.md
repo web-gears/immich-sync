@@ -58,6 +58,11 @@ After that, it will scan your Google Photo takeout folder and find json files fo
 Then, it will go over all albums asking if you want to sync photos to existing Immich album if it finds one, or create a new one. Every album synchonization require confirmation in command prompt. You can skip album confirmations by running the app with the ` -y` argument.
 Albums synchromization will not remove existing photos from Immich albums - it will just append missing ones. 
 
+### Files dates synchronization
+
+There's an option to sync assets dates for one day with the data from takeout json files. Sometimes google includes files with broken metadata, leaving proper dates inthe json files.
+For this, you need to skip album sync, and the next option would be to sync files. After that, you will be prompted with the dialog to enter the date. If date mismatch found between assets at this day and info from takeout, you will have an option to update assets with the takeout date/time.
+
 ### Limitations
 
 Assets for synchronization searched by filename and creation time (+/- one day). That means that if you have different assets with identical filenames taken at the same day - this method could produce false positive search and potentially add extra or wrong assets to the albums.

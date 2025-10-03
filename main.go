@@ -38,6 +38,7 @@ type ImmichAsset struct {
 	Type             string `json:"type"`
 	OriginalFileName string `json:"originalFileName"`
 	OriginalMimeType string `json:"originalMimeType"`
+	FileCreatedAt    string `json:"fileCreatedAt"`
 }
 
 type Album struct {
@@ -67,6 +68,8 @@ type TakeoutFile struct {
 }
 
 var takeout map[string][]TakeoutFile
+
+var takeoutFiles []TakeoutFile
 
 var apiURL string = ""
 var apiKey string = ""
@@ -133,6 +136,32 @@ func YesNoPrompt(label string, def bool, required bool) bool {
 	}
 }
 
+func UserInput(label string, def string, required bool) string {
+	r := bufio.NewReader(os.Stdin)
+	var s string
+
+	for {
+		if def != "" {
+			fmt.Fprintf(os.Stderr, "%s (default: %s): ", label, def)
+		} else {
+			fmt.Fprintf(os.Stderr, "%s: ", label)
+		}
+		s, _ = r.ReadString('\n')
+		s = strings.TrimSpace(s)
+		if s == "" {
+			if def != "" {
+				return def
+			}
+			if required {
+				continue
+			} else {
+				return ""
+			}
+		}
+		return s
+	}
+}
+
 func getAlbums() (albums []Album, err error) {
 	fmt.Println("Getting Immich albums...")
 	body, err := getData("albums", "GET", "")
@@ -145,7 +174,7 @@ func getAlbums() (albums []Album, err error) {
 	return albums, nil
 }
 
-func readFiles() {
+func readFiles(readAll bool) {
 	basePath := takeoutPath
 	entries, err := os.ReadDir(basePath)
 	if err != nil {
@@ -158,17 +187,21 @@ func readFiles() {
 	albumsTotal := 0
 	for _, entry := range entries {
 		entryPath := basePath + "/" + entry.Name()
-		metadata, err := os.Open(entryPath + "/metadata.json")
-		if err == nil {
-			bytefile, _ := io.ReadAll(metadata)
-			defer metadata.Close()
-			var asset Asset
-			json.Unmarshal(bytefile, &asset)
-			if asset.Title != nil && *asset.Title != "" {
-				albumsTotal++
-				readAlbum(entryPath, *asset.Title)
-			}
+		if readAll && entry.IsDir() {
+			readAllDir(entryPath)
+		} else {
+			metadata, err := os.Open(entryPath + "/metadata.json")
+			if err == nil {
+				bytefile, _ := io.ReadAll(metadata)
+				defer metadata.Close()
+				var asset Asset
+				json.Unmarshal(bytefile, &asset)
+				if asset.Title != nil && *asset.Title != "" {
+					albumsTotal++
+					readAlbum(entryPath, *asset.Title)
+				}
 
+			}
 		}
 	}
 	if albumsTotal == 0 {
@@ -207,8 +240,42 @@ func readAlbum(albumPath string, albumTitle string) {
 	}
 }
 
+func readAllDir(path string) {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, entry := range entries {
+		entryPath := path + "/" + entry.Name()
+		if entry.IsDir() {
+			readAllDir(entryPath)
+		} else {
+			if entry.Name() == "metadata.json" || !strings.HasSuffix(entry.Name(), ".supplemental-metadata.json") {
+				continue
+			}
+			file, err := os.Open(entryPath)
+			if err == nil {
+				bytefile, _ := io.ReadAll(file)
+				defer file.Close()
+				var asset Asset
+				json.Unmarshal(bytefile, &asset)
+				fileName := strings.TrimSuffix(entry.Name(), ".supplemental-metadata.json")
+				if asset.Title != nil && *asset.Title != "" && asset.PhotoTakenTime.Timestamp != "" {
+					takeoutFiles = append(takeoutFiles, TakeoutFile{Filename: fileName, CreationTime: asset.CreationTime.Timestamp, PhotoTakenTime: asset.PhotoTakenTime.Timestamp})
+				}
+			}
+		}
+	}
+}
+
 func findAssetByFilename(filename string, createdAfter string, createdBefore string) (asset []ImmichAsset) {
-	body, err := getData("search/metadata", "POST", "{\"originalFileName\": \""+filename+"\", \"takenAfter\": \""+createdAfter+"\", \"takenBefore\": \""+createdBefore+"\"}")
+	var body []byte
+	var err error
+	if createdAfter == "" || createdBefore == "" {
+		body, err = getData("search/metadata", "POST", "{\"originalFileName\": \""+filename+"\"}")
+	} else {
+		body, err = getData("search/metadata", "POST", "{\"originalFileName\": \""+filename+"\", \"takenAfter\": \""+createdAfter+"\", \"takenBefore\": \""+createdBefore+"\"}")
+	}
 	if err != nil {
 		fmt.Println(err)
 	}
@@ -219,6 +286,115 @@ func findAssetByFilename(filename string, createdAfter string, createdBefore str
 		return
 	}
 	return response.Assets.Items
+}
+
+func findAssetsByDate(date string) (assets []ImmichAsset) {
+	// tm, err := time.Parse(date + "T00:00:00Z", "2006-01-02T15:04:05Z");
+	body, err := getData("search/metadata", "POST", "{\"takenAfter\": \""+date+"T00:00:00Z"+"\", \"takenBefore\": \""+date+"T23:59:59Z"+"\"}")
+	if err != nil {
+		fmt.Println(err)
+	}
+	var response ImmichAlbumAsset
+	json.Unmarshal(body, &response)
+	if response.Assets.Total == 0 {
+		return []ImmichAsset{}
+	}
+	return response.Assets.Items
+}
+
+func syncFilesDates() {
+	fmt.Println("Syncing files dates...")
+	for _, file := range takeoutFiles {
+		photoTakenTimestamp, err1 := strconv.ParseInt(file.PhotoTakenTime, 10, 64)
+		if err1 != nil {
+			fmt.Println("Error parsing timestamp:", err1)
+			return
+		}
+		assets := findAssetByFilename(file.Filename, "", "")
+		if len(assets) == 0 {
+			fmt.Println("Asset not found: " + file.Filename)
+			continue
+		}
+		if len(assets) > 1 {
+			fmt.Println("More than one asset found: " + file.Filename)
+			continue
+		}
+		asset := assets[0]
+		tm := time.Unix(photoTakenTimestamp, 0)
+		photoTakenDate := tm.UTC().Format("2006-01-02")
+		assetCreatedAtDateObj, err := time.Parse("2006-01-02T15:04:05.000Z", asset.FileCreatedAt)
+		if err != nil {
+			fmt.Println("Error parsing date:", err)
+			continue
+		}
+		assetCreatedAtDate := assetCreatedAtDateObj.UTC().Format("2006-01-02")
+		if photoTakenDate != assetCreatedAtDate {
+			photoTaken := tm.UTC().Format("2006-01-02T15:04:05.000Z")
+			fmt.Printf("Updating %s: %s -> %s\n", file.Filename, asset.FileCreatedAt, photoTaken)
+			ok := YesNoPrompt("Are you sure you want to update this file?", false, true)
+			if !ok {
+				continue
+			} else {
+				_, err := getData("assets/"+asset.Id, "PUT", "{\"dateTimeOriginal\": \""+photoTaken+"\"}")
+				if err != nil {
+					fmt.Println(err)
+				}
+			}
+		} else {
+			fmt.Printf("No update needed for %s\n", file.Filename)
+		}
+	}
+}
+
+func SyncFilesByDate(date string) {
+	fmt.Println("Syncing files by date: " + date)
+	assets := findAssetsByDate(date)
+	if len(assets) == 0 {
+		fmt.Println("No assets found for date: " + date)
+		return
+	}
+	fmt.Printf("Found %d assets for date: %s\n", len(assets), date)
+	supressConfirmation = false
+	for _, asset := range assets {
+		found := false
+		for _, file := range takeoutFiles {
+			if asset.OriginalFileName == file.Filename {
+				found = true
+				photoTakenTimestamp, err1 := strconv.ParseInt(file.PhotoTakenTime, 10, 64)
+				if err1 != nil {
+					fmt.Println("Error parsing timestamp:", err1)
+					return
+				}
+				tm := time.Unix(photoTakenTimestamp, 0)
+				photoTakenDate := tm.UTC().Format("2006-01-02")
+				assetCreatedAtDateObj, err := time.Parse("2006-01-02T15:04:05.000Z", asset.FileCreatedAt)
+				if err != nil {
+					fmt.Println("Error parsing date:", err)
+					continue
+				}
+				assetCreatedAtDate := assetCreatedAtDateObj.UTC().Format("2006-01-02")
+				if photoTakenDate != assetCreatedAtDate {
+					photoTaken := tm.UTC().Format("2006-01-02T15:04:05.000Z")
+					fmt.Printf("Updating %s: %s -> %s\n", file.Filename, asset.FileCreatedAt, photoTaken)
+					ok := YesNoPrompt("Are you sure you want to update this file?", false, true)
+					if !ok {
+						continue
+					} else {
+						_, err := getData("assets/"+asset.Id, "PUT", "{\"dateTimeOriginal\": \""+photoTaken+"\"}")
+						if err != nil {
+							fmt.Println(err)
+						}
+					}
+				} else {
+					fmt.Printf("No update needed for %s\n", file.Filename)
+				}
+				break
+			}
+		}
+		if !found {
+			fmt.Println("No matching file found in takeout for asset: " + asset.OriginalFileName)
+		}
+	}
 }
 
 func syncAlbum(album Album, files []TakeoutFile, override bool) {
@@ -381,28 +557,48 @@ func main() {
 		return
 	}
 
-	readFiles()
-	if len(takeout) == 0 {
-		fmt.Println("No files found")
-		return
-	}
-	albums, err := getAlbums()
-	for albumName, files := range takeout {
-		foundAlbum := false
-		for _, album := range albums {
-			if album.AlbumName == albumName {
-				syncAlbum(album, files, false)
-				foundAlbum = true
-				break
+	ok = YesNoPrompt("Do you want to sync your albums?", true, true)
+	if ok {
+		readFiles(false)
+		if len(takeout) == 0 {
+			fmt.Println("No files found")
+			return
+		}
+		albums, err := getAlbums()
+		for albumName, files := range takeout {
+			foundAlbum := false
+			for _, album := range albums {
+				if album.AlbumName == albumName {
+					syncAlbum(album, files, false)
+					foundAlbum = true
+					break
+				}
+			}
+			if !foundAlbum {
+				createAlbum(albumName, files)
 			}
 		}
-		if !foundAlbum {
-			createAlbum(albumName, files)
+		if err != nil {
+			fmt.Println(err)
+		} else {
+		}
+		fmt.Println("Done!")
+	} else {
+		ok = YesNoPrompt("Do you want to sync assets dates?", true, true)
+		if ok {
+			readFiles(true)
+			fmt.Println("Found total files: " + strconv.Itoa(len(takeoutFiles)))
+			date := UserInput("Enter date to filter files (YYYY-MM-DD) or leave empty to sync all files: ", "", true)
+			if date != "" {
+				SyncFilesByDate(date)
+			} else {
+				syncFilesDates()
+			}
+			fmt.Println("Done!")
+		} else {
+			fmt.Println("Bye-bye...")
+			return
 		}
 	}
-	if err != nil {
-		fmt.Println(err)
-	} else {
-	}
-	fmt.Println("Done!")
+
 }
